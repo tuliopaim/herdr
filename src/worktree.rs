@@ -168,6 +168,27 @@ fn repository_git_args(repo_root: &Path, trust_repository: bool) -> Vec<String> 
     args
 }
 
+// The key is the canonical common Git directory, including for linked checkouts.
+pub(crate) fn bare_checkout_directory(repo_key: &str) -> Option<&Path> {
+    let common = Path::new(repo_key);
+    if common.file_name()? != ".bare" || !crate::workspace::git_worktree_info(common)?.is_bare {
+        return None;
+    }
+    common.parent()
+}
+
+pub(crate) fn repository_checkout_path(
+    root: &Path,
+    repo_key: &str,
+    repo_name: &str,
+    branch: &str,
+) -> PathBuf {
+    match bare_checkout_directory(repo_key) {
+        Some(directory) => directory.join(branch_to_path_slug(branch)),
+        None => default_checkout_path(root, repo_name, branch),
+    }
+}
+
 pub(crate) fn default_checkout_path(root: &Path, repo_name: &str, branch: &str) -> PathBuf {
     root.join(repo_name).join(branch_to_path_slug(branch))
 }
