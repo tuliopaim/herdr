@@ -1,12 +1,18 @@
 use super::*;
 
-fn checkout_path_preview(root: &str, repo: &str, branch: &str) -> String {
+fn checkout_path_preview(root: &str, repo: &str, repo_key: &str, branch: &str) -> String {
     // This is an endpoint path, not a path on the machine drawing the dialog.
     let separator = if !root.starts_with('/') && root.contains('\\') {
         '\\'
     } else {
         '/'
     };
+    if let Some(directory) = repo_key.strip_suffix(&format!("{separator}.bare")) {
+        return format!(
+            "{directory}{separator}{}",
+            crate::worktree::branch_to_path_slug(branch)
+        );
+    }
     format!(
         "{}{separator}{repo}{separator}{}",
         root.trim_end_matches(separator),
@@ -194,7 +200,14 @@ impl ClientShellState {
             .and_then(|workspace| workspace.worktree.as_ref())
             .is_some_and(|worktree| worktree.is_linked_worktree);
         let kind = match action {
-            KeybindAction::NewWorktree | KeybindAction::OpenWorktree if linked => {
+            KeybindAction::NewWorktree | KeybindAction::OpenWorktree
+                if linked
+                    && !workspace
+                        .and_then(|workspace| workspace.worktree.as_ref())
+                        .is_some_and(|worktree| {
+                            worktree.key.ends_with("/.bare") || worktree.key.ends_with("\\.bare")
+                        }) =>
+            {
                 self.set_endpoint_error(
                     "New and open worktree actions start from the repo parent workspace.",
                 );
@@ -235,8 +248,12 @@ impl ClientShellState {
         let Some(ClientShellOverlay::WorktreeCreate(create)) = self.overlay.as_mut() else {
             return;
         };
-        create.checkout_path =
-            checkout_path_preview(&worktree_directory, &create.repo_name, &create.branch);
+        create.checkout_path = checkout_path_preview(
+            &worktree_directory,
+            &create.repo_name,
+            &create.repo_key,
+            &create.branch,
+        );
         create.error = None;
     }
 
@@ -257,8 +274,12 @@ impl ClientShellState {
             return;
         }
         create.branch.trim_and_accept();
-        create.checkout_path =
-            checkout_path_preview(&worktree_directory, &create.repo_name, &branch);
+        create.checkout_path = checkout_path_preview(
+            &worktree_directory,
+            &create.repo_name,
+            &create.repo_key,
+            &branch,
+        );
         create.creating = true;
         create.error = None;
         let workspace_id = create.source_workspace_id.clone();
@@ -376,7 +397,7 @@ impl ClientShellState {
         match (kind, result) {
             (
                 PendingEndpointKind::PrepareWorktreeCreate { workspace_id },
-                Ok(ResponseResult::WorktreeList { source, .. }),
+                Ok(ResponseResult::WorktreeList { source, worktrees }),
             ) => {
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -386,12 +407,25 @@ impl ClientShellState {
                 let Some(worktree_directory) = self.endpoint_worktree_directory() else {
                     return false;
                 };
-                let checkout_path =
-                    checkout_path_preview(&worktree_directory, &source.repo_name, &branch);
+                let repo_key = if worktrees
+                    .iter()
+                    .any(|entry| entry.is_bare && entry.path == source.repo_key)
+                {
+                    source.repo_key
+                } else {
+                    String::new()
+                };
+                let checkout_path = checkout_path_preview(
+                    &worktree_directory,
+                    &source.repo_name,
+                    &repo_key,
+                    &branch,
+                );
                 self.overlay = Some(ClientShellOverlay::WorktreeCreate(
                     ClientWorktreeCreateOverlay {
                         source_workspace_id: workspace_id,
                         repo_name: source.repo_name,
+                        repo_key,
                         branch: TextEditor::new(&branch, true),
                         checkout_path,
                         error: None,
@@ -551,17 +585,29 @@ mod path_tests {
     use super::checkout_path_preview;
 
     #[test]
+    fn bare_endpoint_preview_uses_common_directory_parent_without_local_io() {
+        assert_eq!(
+            checkout_path_preview("/configured", "E2", "/remote/dev/E2/.bare", "feature/a"),
+            "/remote/dev/E2/feature-a"
+        );
+        assert_eq!(
+            checkout_path_preview(r"C:\configured", "E2", r"D:\repos\E2\.bare", "feature/a"),
+            r"D:\repos\E2\feature-a"
+        );
+    }
+
+    #[test]
     fn endpoint_path_style_is_independent_of_the_client_os() {
         assert_eq!(
-            checkout_path_preview("/worktrees/", "repo", "feature/a"),
+            checkout_path_preview("/worktrees/", "repo", "", "feature/a"),
             "/worktrees/repo/feature-a"
         );
         assert_eq!(
-            checkout_path_preview(r"C:\worktrees\", "repo", "feature/a"),
+            checkout_path_preview(r"C:\worktrees\", "repo", "", "feature/a"),
             r"C:\worktrees\repo\feature-a"
         );
         assert_eq!(
-            checkout_path_preview(r"\\server\share", "repo", "feature/a"),
+            checkout_path_preview(r"\\server\share", "repo", "", "feature/a"),
             r"\\server\share\repo\feature-a"
         );
     }

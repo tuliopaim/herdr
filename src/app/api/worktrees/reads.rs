@@ -24,7 +24,10 @@ impl SourceInput {
         trust_repository: bool,
     ) -> Result<(Option<String>, WorktreeSource), ApiFailure> {
         let source = if let Some(membership) = self.membership {
-            if membership.is_linked_worktree && !allow_linked {
+            if membership.is_linked_worktree
+                && !allow_linked
+                && crate::worktree::bare_checkout_directory(&membership.key).is_none()
+            {
                 return Err(linked_source_error());
             }
             let source_checkout_path = if membership.is_linked_worktree {
@@ -59,7 +62,7 @@ impl SourceInput {
                     )
                 })?;
             if space.is_linked_worktree {
-                if !allow_linked {
+                if !allow_linked && crate::worktree::bare_checkout_directory(&space.key).is_none() {
                     return Err(linked_source_error());
                 }
                 self.workspace_id = None;
@@ -302,11 +305,12 @@ fn worktree_source_from_space(
     allow_linked: bool,
     trust_repository: bool,
 ) -> WorktreeSource {
-    let source_checkout_path = if allow_linked {
-        parent_checkout_path_for_space(&space, trust_repository)
-    } else {
-        space.repo_root.clone()
-    };
+    let source_checkout_path =
+        if allow_linked && crate::worktree::bare_checkout_directory(&space.key).is_none() {
+            parent_checkout_path_for_space(&space, trust_repository)
+        } else {
+            space.repo_root.clone()
+        };
     WorktreeSource {
         workspace_idx: None,
         source_checkout_path: source_checkout_path.clone(),

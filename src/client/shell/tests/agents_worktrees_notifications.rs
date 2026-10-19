@@ -1278,6 +1278,53 @@ fn worktree_create_previews_the_endpoint_owned_checkout_path() {
 }
 
 #[test]
+fn bare_worktree_create_previews_remote_sibling_on_typing_and_submit() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut snapshot = snapshot();
+    snapshot.workspaces[0].worktree = Some(crate::protocol::ClientShellWorktree {
+        key: "/remote/not-on-client/E2/.bare".into(),
+        label: "E2".into(),
+        is_linked_worktree: true,
+    });
+    state.set_snapshot(Box::new(snapshot));
+    let mut prepare = ClientShellInput::default();
+    state.begin_worktree_action_for(
+        crate::input::KeybindAction::NewWorktree,
+        "ws_1".into(),
+        &mut prepare,
+    );
+    let [ClientShellAction::Endpoint { request, .. }] = &prepare.actions[..] else {
+        panic!("expected list")
+    };
+    let mut result = worktree_list_result(None);
+    let crate::api::schema::ResponseResult::WorktreeList { source, worktrees } = &mut result else {
+        unreachable!()
+    };
+    source.repo_key = "/remote/not-on-client/E2/.bare".into();
+    source.repo_name = "E2".into();
+    worktrees[0].path = source.repo_key.clone();
+    worktrees[0].is_bare = true;
+    state.handle_endpoint_result("boot-1", &request.id, Ok(result));
+    state.handle_input_bytes(b"feature/sibling");
+    assert!(
+        matches!(&state.overlay, Some(ClientShellOverlay::WorktreeCreate(create))
+        if create.checkout_path == "/remote/not-on-client/E2/feature-sibling")
+    );
+    let submit = state.handle_input_bytes(b"\r");
+    let [ClientShellAction::Endpoint { request, .. }] = &submit.actions[..] else {
+        panic!("expected create")
+    };
+    assert!(
+        matches!(&request.method, crate::api::schema::Method::WorktreeCreate(params)
+        if params.path.is_none() && params.branch.as_deref() == Some("feature/sibling"))
+    );
+    assert!(
+        matches!(&state.overlay, Some(ClientShellOverlay::WorktreeCreate(create))
+        if create.checkout_path == "/remote/not-on-client/E2/feature-sibling")
+    );
+}
+
+#[test]
 fn unavailable_worktree_create_does_not_wedge_the_overlay() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

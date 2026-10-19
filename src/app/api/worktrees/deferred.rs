@@ -86,7 +86,8 @@ impl App {
                 .and_then(crate::workspace::git_space_metadata)
         });
         if git_space.is_some_and(|space| {
-            !space.is_linked_worktree
+            (!space.is_linked_worktree
+                || crate::worktree::bare_checkout_directory(&space.key).is_some())
                 && space.key == api.repo_key
                 && crate::worktree::canonical_or_original(&space.repo_root)
                     == crate::worktree::canonical_or_original(&api.source_repo_root)
@@ -137,8 +138,9 @@ impl App {
                     return;
                 }
             },
-            None => crate::worktree::default_checkout_path(
+            None => crate::worktree::repository_checkout_path(
                 &self.state.worktree_directory,
+                &source.repo_key,
                 &source.repo_name,
                 &branch,
             ),
