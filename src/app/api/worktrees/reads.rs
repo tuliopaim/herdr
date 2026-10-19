@@ -277,7 +277,20 @@ impl App {
                             })
                         }
                     })
-                    .or_else(|| self.find_parent_workspace_by_key(&source.repo_key))
+                    .or_else(|| {
+                        let idx = self.find_parent_workspace_by_key(&source.repo_key)?;
+                        // Discovery may start at the container or an unmanaged checkout.
+                        // Keep the existing parent's checkout identity when reusing it.
+                        let ws = &self.state.workspaces[idx];
+                        if let Some(parent) = ws.worktree_space() {
+                            source.source_checkout_path = parent.checkout_path.clone();
+                            source.source_repo_root = parent.repo_root.clone();
+                        } else if let Some(parent) = ws.git_space() {
+                            source.source_checkout_path = parent.repo_root.clone();
+                            source.source_repo_root = parent.repo_root.clone();
+                        }
+                        Some(idx)
+                    })
                     .or_else(|| self.open_workspace_idx_for_checkout(&source.source_checkout_path));
                 match result.request.method {
                     Method::WorktreeList(_) => {
