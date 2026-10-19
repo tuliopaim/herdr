@@ -7,7 +7,14 @@ fn checkout_path_preview(root: &str, repo: &str, repo_key: &str, branch: &str) -
     } else {
         '/'
     };
-    if let Some(directory) = repo_key.strip_suffix(&format!("{separator}.bare")) {
+    let repo_key = if let Some(unc) = repo_key.strip_prefix(r"\\?\UNC\") {
+        std::borrow::Cow::Owned(format!(r"\\{unc}"))
+    } else {
+        std::borrow::Cow::Borrowed(repo_key.strip_prefix(r"\\?\").unwrap_or(repo_key))
+    };
+    let repo_separator = if repo_key.contains('\\') { '\\' } else { '/' };
+    if let Some(directory) = repo_key.strip_suffix(&format!("{repo_separator}.bare")) {
+        let separator = repo_separator;
         return format!(
             "{directory}{separator}{}",
             crate::worktree::branch_to_path_slug(branch)
@@ -407,10 +414,7 @@ impl ClientShellState {
                 let Some(worktree_directory) = self.endpoint_worktree_directory() else {
                     return false;
                 };
-                let repo_key = if worktrees
-                    .iter()
-                    .any(|entry| entry.is_bare && entry.path == source.repo_key)
-                {
+                let repo_key = if worktrees.iter().any(|entry| entry.is_bare) {
                     source.repo_key
                 } else {
                     String::new()
@@ -593,6 +597,15 @@ mod path_tests {
         assert_eq!(
             checkout_path_preview(r"C:\configured", "E2", r"D:\repos\E2\.bare", "feature/a"),
             r"D:\repos\E2\feature-a"
+        );
+        assert_eq!(
+            checkout_path_preview(
+                "/configured",
+                "E2",
+                r"\\?\UNC\server\share\E2\.bare",
+                "feature/a"
+            ),
+            r"\\server\share\E2\feature-a"
         );
     }
 

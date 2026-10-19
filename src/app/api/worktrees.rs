@@ -912,6 +912,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_bare_worktree_open_reuses_existing_parent_checkout_identity() {
+        let seed = create_committed_repo("bare-parent-seed");
+        let container = unique_temp_path("bare-parent-layout");
+        std::fs::create_dir_all(&container).unwrap();
+        let container = crate::worktree::canonical_or_original(&container);
+        let bare = container.join(".bare");
+        run_git(
+            &container,
+            &[
+                "clone",
+                "--bare",
+                seed.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(container.join(".git"), "gitdir: .bare\n").unwrap();
+        let main = container.join("main");
+        run_git(
+            &bare,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "parent-main",
+                main.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        let mut app = app_with_parent(&main);
+        #[cfg(unix)]
+        {
+            app.state.default_shell = "/bin/sh".into();
+        }
+        #[cfg(windows)]
+        {
+            app.state.default_shell = "cmd.exe".into();
+        }
+        let response = run_deferred_api_request(
+            &mut app,
+            Request {
+                id: "create".into(),
+                method: crate::api::schema::Method::WorktreeCreate(WorktreeCreateParams {
+                    cwd: Some(main.display().to_string()),
+                    branch: Some("created".into()),
+                    ..WorktreeCreateParams::default()
+                }),
+            },
+        );
+        let success: SuccessResponse = serde_json::from_str(&response).expect(&response);
+        assert!(matches!(
+            success.result,
+            ResponseResult::WorktreeCreated { .. }
+        ));
+        let parent = app.state.workspaces[0].worktree_space().unwrap().clone();
+        assert_eq!(
+            crate::worktree::canonical_or_original(&parent.checkout_path),
+            crate::worktree::canonical_or_original(&main)
+        );
+        let parent_id = app.state.workspaces[0].id.clone();
+        let other = container.join("other");
+        run_git(
+            &bare,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "other",
+                other.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        let unmanaged = container.join("unmanaged");
+        run_git(
+            &bare,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "unmanaged",
+                unmanaged.to_str().unwrap(),
+                "HEAD",
+            ],
+        );
+        for (cwd, target, already_open) in [
+            (&container, &other, false),
+            (&container, &main, true),
+            (&unmanaged, &other, true),
+            (&unmanaged, &main, true),
+        ] {
+            let response = run_deferred_api_request(
+                &mut app,
+                Request {
+                    id: "open".into(),
+                    method: crate::api::schema::Method::WorktreeOpen(WorktreeOpenParams {
+                        cwd: Some(cwd.display().to_string()),
+                        path: Some(target.display().to_string()),
+                        ..WorktreeOpenParams::default()
+                    }),
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).expect(&response);
+            let ResponseResult::WorktreeOpened {
+                workspace,
+                already_open: actual,
+                ..
+            } = success.result
+            else {
+                panic!("expected opened")
+            };
+            assert_eq!(actual, already_open);
+            if target == &main {
+                assert_eq!(workspace.workspace_id, parent_id);
+            }
+            assert_eq!(app.state.workspaces[0].worktree_space(), Some(&parent));
+            assert_eq!(app.state.workspaces.len(), 3);
+        }
+        for (_, runtime) in app.terminal_runtimes.drain() {
+            runtime.shutdown();
+        }
+        std::fs::remove_dir_all(container).unwrap();
+        std::fs::remove_dir_all(seed).unwrap();
+    }
+
+    #[tokio::test]
     async fn api_worktree_create_opens_workspace_and_marks_membership() {
         let repo = create_committed_repo("api-worktree-create-repo");
         let worktree_root = unique_temp_path("api-worktree-create-root");
