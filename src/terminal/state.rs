@@ -134,6 +134,7 @@ pub struct TerminalState {
     fallback_visible_blocker: bool,
     fallback_observed_at: Option<Instant>,
     pub hook_authority: Option<HookAuthority>,
+    program_status: super::program_status::ProgramStatusRecords,
     pub agent_metadata: HashMap<String, AgentMetadata>,
     pub metadata_tokens: crate::metadata_tokens::MetadataTokens,
     pub persisted_agent_session: Option<crate::agent_resume::PersistedAgentSession>,
@@ -174,6 +175,7 @@ impl TerminalState {
             fallback_visible_blocker: false,
             fallback_observed_at: None,
             hook_authority: None,
+            program_status: Default::default(),
             agent_metadata: HashMap::new(),
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
             persisted_agent_session: None,
@@ -370,6 +372,9 @@ impl TerminalState {
         let previous_known_agent = self.effective_known_agent();
         let previous_state = self.state;
         let previous_presentation = self.effective_presentation_for_state_at(previous_state, now);
+        if process_exited {
+            self.program_status.process_exit(now);
+        }
         let previous_detected_agent = self.detected_agent;
         let previous_session = self.current_session_identity_for_persistence();
         let newer_custom_authority = process_exited
@@ -2037,16 +2042,18 @@ impl TerminalState {
     }
 
     pub fn effective_agent_label(&self) -> Option<&str> {
-        self.hook_authority
-            .as_ref()
-            .filter(|authority| self.hook_authority_is_effective(authority))
-            .map(|authority| authority.agent_label.as_str())
-            .or_else(|| {
-                self.recent_agent_process_exit
-                    .is_none()
-                    .then(|| self.detected_agent.map(crate::detect::agent_label))
-                    .flatten()
-            })
+        self.program_status.app().or_else(|| {
+            self.hook_authority
+                .as_ref()
+                .filter(|authority| self.hook_authority_is_effective(authority))
+                .map(|authority| authority.agent_label.as_str())
+                .or_else(|| {
+                    self.recent_agent_process_exit
+                        .is_none()
+                        .then(|| self.detected_agent.map(crate::detect::agent_label))
+                        .flatten()
+                })
+        })
     }
 
     pub fn effective_known_agent(&self) -> Option<Agent> {
@@ -2401,6 +2408,37 @@ impl TerminalState {
         })
     }
 
+    pub(crate) fn program_status_explain(&self) -> Option<serde_json::Value> {
+        self.program_status.explain()
+    }
+
+    pub(crate) fn apply_program_status(
+        &mut self,
+        events: Vec<crate::ghostty::ProgramStatusEvent>,
+        now: Instant,
+    ) -> TerminalStateMutation {
+        let previous_agent_label = self.effective_agent_label().map(str::to_string);
+        let previous_known_agent = self.effective_known_agent();
+        let previous_state = self.state;
+        let previous_presentation = self.effective_presentation_for_state_at(previous_state, now);
+        let had_protocol = self.program_status.state().is_some();
+        self.program_status.apply(events, now);
+        if had_protocol && self.program_status.state().is_none() {
+            // A cleared protocol record must not reveal a stale socket lifecycle state.
+            self.hook_authority = None;
+        }
+        TerminalStateMutation {
+            effective_state_change: self.recompute_effective_state(
+                previous_agent_label,
+                previous_known_agent,
+                previous_state,
+                previous_presentation,
+                now,
+            ),
+            ..Default::default()
+        }
+    }
+
     fn recompute_effective_state(
         &mut self,
         previous_agent_label: Option<String>,
@@ -2409,7 +2447,9 @@ impl TerminalState {
         previous_presentation: EffectivePresentation,
         now: Instant,
     ) -> Option<EffectiveStateChange> {
-        let state = if self.visible_blocker_overrides_hook() {
+        let state = if let Some(state) = self.program_status.state() {
+            state
+        } else if self.visible_blocker_overrides_hook() {
             AgentState::Blocked
         } else {
             self.hook_authority

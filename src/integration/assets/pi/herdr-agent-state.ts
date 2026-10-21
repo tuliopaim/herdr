@@ -2,7 +2,7 @@
 // managed by herdr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // HERDR_INTEGRATION_ID=pi
-// HERDR_INTEGRATION_VERSION=9
+// HERDR_INTEGRATION_VERSION=10
 // @ts-nocheck
 
 import net from "node:net";
@@ -187,12 +187,37 @@ export default function (pi) {
   let lastState: AgentState | undefined;
   let lastMessage: string | undefined;
   let rootSession = false;
+  let acceptingActivity = true;
+  const activeSources = new Set<string>();
+  let activityReported = false;
+
+  function publishActivity() {
+    const active = rootSession && activeSources.size > 0;
+    if (active === activityReported) return;
+    activityReported = active;
+    // Independent OSC 7501 record: never replace or clear Pi's default record.
+    // Fixed protocol strings avoid importing a Pi-version-specific formatter.
+    process.stdout.write(active
+      ? "\x1b]7501;state=working:id=herdr-activity:app=pi\x1b\\"
+      : "\x1b]7501;state=clear:id=herdr-activity\x1b\\");
+  }
+
+  pi.events.on("herdr:activity", (data) => {
+    if (!acceptingActivity || typeof data?.source !== "string" || !data.source ||
+        typeof data.active !== "boolean") return;
+    if (data.active) activeSources.add(data.source);
+    else activeSources.delete(data.source);
+    // Keep startup snapshots until session_start establishes the TUI gate.
+    if (!rootSession) return;
+    publishActivity();
+    publishState();
+  });
 
   function desiredState() {
     if (blockedCount > 0) {
       return { state: "blocked" as const, message: blockedMessage };
     }
-    if (agentActive) {
+    if (agentActive || activeSources.size > 0) {
       return { state: "working" as const, message: undefined };
     }
     return { state: "idle" as const, message: undefined };
@@ -229,15 +254,32 @@ export default function (pi) {
   pi.on("session_start", async (event, ctx) => {
     // TUI only: RPC/JSON/print modes are headless (no PTY herdr can display),
     // and RPC still reports hasUI=true, so mode is the reliable gate.
-    if (ctx?.mode !== "tui") {
+    if (ctx?.mode !== "tui" || process.env.PI_DELEGATED === "1") {
+      acceptingActivity = false;
+      activeSources.clear();
       return;
     }
     rootSession = true;
+    acceptingActivity = true;
+    publishActivity();
     updateSessionRef(ctx);
     await reportSession(event?.reason);
     // A reload can replace this extension mid-run without emitting another agent_start.
     agentActive = ctx?.isIdle?.() === false;
     publishState(true);
+  });
+
+  pi.on("session_shutdown", () => {
+    activeSources.clear();
+    publishActivity();
+    if (rootSession) {
+      agentActive = false;
+      blockedCount = 0;
+      blockedMessage = undefined;
+      publishState();
+    }
+    rootSession = false;
+    acceptingActivity = false;
   });
 
   pi.on("agent_start", (_event, ctx) => {

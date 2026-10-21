@@ -329,7 +329,8 @@ impl App {
         let Some(terminal) = self.state.terminals.get(terminal_id) else {
             return agent_not_found(id, &target.target);
         };
-        if terminal.full_lifecycle_hook_authority_active() {
+        let program_status = terminal.program_status_explain();
+        if program_status.is_some() || terminal.full_lifecycle_hook_authority_active() {
             let explain = serde_json::json!({
                 "agent": terminal.effective_agent_label().unwrap_or("unknown"),
                 "state": crate::detect::manifest::agent_state_label(terminal.state),
@@ -344,7 +345,8 @@ impl App {
                 "visible_blocker": false,
                 "visible_working": false,
                 "screen_detection_skipped": true,
-                "screen_detection_skip_reason": "full_lifecycle_hook_authority",
+                "screen_detection_skip_reason": if program_status.is_some() { "program_status_authority" } else { "full_lifecycle_hook_authority" },
+                "program_status": program_status,
                 "skip_state_update": false,
                 "skipped_update_reason": null,
                 "fallback_reason": null,

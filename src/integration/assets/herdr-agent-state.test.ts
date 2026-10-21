@@ -7,8 +7,10 @@ import { join } from "node:path";
 const originalPlatform = process.platform;
 const originalArgv = process.argv;
 const originalCreateConnection = net.createConnection;
+const originalStdoutWrite = process.stdout.write;
 const originalEnvironment = {
   HERDR_ENV: process.env.HERDR_ENV,
+  PI_DELEGATED: process.env.PI_DELEGATED,
   HERDR_OMP_IDLE_DEBOUNCE_MS: process.env.HERDR_OMP_IDLE_DEBOUNCE_MS,
   HERDR_PANE_ID: process.env.HERDR_PANE_ID,
   HERDR_SOCKET_PATH: process.env.HERDR_SOCKET_PATH,
@@ -37,6 +39,7 @@ afterEach(async () => {
   Object.defineProperty(process, "platform", { value: originalPlatform });
   net.createConnection = originalCreateConnection;
   process.argv = originalArgv;
+  process.stdout.write = originalStdoutWrite;
   for (const [name, value] of Object.entries(originalEnvironment)) {
     if (value === undefined) {
       delete process.env[name];
@@ -86,6 +89,18 @@ function createExtensionHarness() {
     },
   };
 }
+
+function captureOsc() {
+  const output: string[] = [];
+  process.stdout.write = ((chunk: unknown) => {
+    output.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  return output;
+}
+
+const activityWorking = "\x1b]7501;state=working:id=herdr-activity:app=pi\x1b\\";
+const activityClear = "\x1b]7501;state=clear:id=herdr-activity\x1b\\";
 
 function configureIntegrationEnvironment(recordingSocketPath: string) {
   // Tests may run inside an OMP shell; nested-session cases opt in explicitly.
@@ -324,6 +339,105 @@ test("Pi reports idle only after the agent settles", async () => {
   await waitFor(() => requestStates(requests).length === 3);
   expect(requestStates(requests)).toEqual(["idle", "working", "idle"]);
 });
+
+test("Pi stays working while subagents run with an idle root TUI", async () => {
+  const requests = await startRecordingServer("pi-subagent-activity");
+  const { eventHandlers, handlers, pi } = createExtensionHarness();
+  const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+  install(pi);
+
+  let idle = true;
+  const context = piContext(() => idle);
+  await handlers.get("session_start")?.({ reason: "startup" }, context);
+  await waitFor(() => requestStates(requests).length === 1);
+  expect(requestStates(requests)).toEqual(["idle"]);
+
+  const output = captureOsc();
+  // Delegation reports whether any subagent is still running.
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true }, context);
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline && requestStates(requests).length < 2) {
+    await Bun.sleep(5);
+  }
+  expect(requestStates(requests)).toEqual(["idle", "working"]);
+
+  handlers.get("agent_settled")?.({}, context);
+  await Bun.sleep(25);
+  expect(requestStates(requests)).toEqual(["idle", "working"]);
+
+  // Duplicate starts are snapshots, not a balanced count.
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true }, context);
+  eventHandlers.get("herdr:activity")?.({ source: "other", active: true }, context);
+  expect(output).toEqual([activityWorking]);
+
+  // Explicit blockers still outrank aggregate work on the socket path.
+  eventHandlers.get("herdr:blocked")?.({ active: true, label: "Question" }, context);
+  await waitFor(() => requestStates(requests).at(-1) === "blocked");
+  eventHandlers.get("herdr:activity")?.({ source: "other", active: false }, context);
+  handlers.get("agent_settled")?.({}, context);
+  await Bun.sleep(25);
+  expect(requestStates(requests)).toEqual(["idle", "working", "blocked"]);
+  expect(output).toEqual([activityWorking]);
+  eventHandlers.get("herdr:blocked")?.({ active: false }, context);
+  await waitFor(() => requestStates(requests).at(-1) === "working");
+
+  // Only the last worker finishing clears the aggregate activity signal.
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: false }, context);
+  await waitFor(() => requestStates(requests).at(-1) === "idle");
+  expect(requestStates(requests)).toEqual(["idle", "working", "blocked", "working", "idle"]);
+  expect(output).toEqual([activityWorking, activityClear]);
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: false }, context);
+  expect(output).toEqual([activityWorking, activityClear]);
+
+  // Ending child work must not settle a still-running root.
+  idle = false;
+  handlers.get("agent_start")?.({}, context);
+  await waitFor(() => requestStates(requests).at(-1) === "working");
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true }, context);
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: false }, context);
+  await Bun.sleep(25);
+  expect(requestStates(requests).at(-1)).toBe("working");
+  expect(output).toEqual([activityWorking, activityClear, activityWorking, activityClear]);
+
+  // Shutdown clears only our own record, leaving core's root OSC untouched.
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true }, context);
+  await waitFor(() => requestStates(requests).at(-1) === "working");
+  handlers.get("session_shutdown")?.({}, context);
+  await waitFor(() => requestStates(requests).at(-1) === "idle");
+  handlers.get("session_shutdown")?.({}, context);
+  eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true }, context);
+  expect(output).toEqual([activityWorking, activityClear, activityWorking, activityClear, activityWorking, activityClear]);
+});
+
+for (const mode of ["tui", "rpc", "json", "print", "delegated"]) {
+  test(`Pi retains startup activity only for root TUI (${mode})`, async () => {
+    const requests = await startRecordingServer(`pi-recovered-${mode}`);
+    const { eventHandlers, handlers, pi } = createExtensionHarness();
+    const { default: install } = await importFresh("./pi/herdr-agent-state.ts");
+    install(pi);
+    const output = captureOsc();
+    const context = { ...piContext(() => true), mode: mode === "delegated" ? "tui" : mode };
+    if (mode === "delegated") process.env.PI_DELEGATED = "1";
+    // Delegation may recover before this extension's session_start runs.
+    eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true });
+    expect(output).toEqual([]);
+    await handlers.get("session_start")?.({ reason: "startup" }, context);
+    eventHandlers.get("herdr:activity")?.({ source: "subagents", active: true });
+    if (mode === "tui") {
+      await waitFor(() => requestStates(requests).length === 1);
+      expect(requestStates(requests)).toEqual(["working"]);
+      expect(output).toEqual([activityWorking]);
+      handlers.get("session_shutdown")?.({}, context);
+      await waitFor(() => requestStates(requests).at(-1) === "idle");
+      expect(output).toEqual([activityWorking, activityClear]);
+    } else {
+      handlers.get("session_shutdown")?.({}, context);
+      await Bun.sleep(25);
+      expect(requests).toEqual([]);
+      expect(output).toEqual([]);
+    }
+  });
+}
 
 test("Pi ignores RPC sessions even when UI APIs are available", async () => {
   const requests = await startRecordingServer("pi-rpc");

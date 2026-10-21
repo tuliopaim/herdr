@@ -164,7 +164,9 @@ pub const Handler = struct {
         pwd_changed: ?*const fn (*Handler) void,
 
         /// Called when the running program reports progress via OSC 9;4.
+        shell_prompt: ?*const fn (*Handler) void,
         progress_report: ?*const fn (*Handler, osc.Command.ProgressReport) void,
+        program_status: ?*const fn (*Handler, osc.Command.ProgramStatus.Report) void,
 
         /// Called when the running program writes to a clipboard.
         clipboard_write: ?*const fn (*Handler, clipboard.Write) void,
@@ -214,6 +216,8 @@ pub const Handler = struct {
             .drag_and_drop = null,
             .enquiry = null,
             .progress_report = null,
+            .program_status = null,
+            .shell_prompt = null,
             .size = null,
             .title_changed = null,
             .pwd_changed = null,
@@ -459,10 +463,16 @@ pub const Handler = struct {
 
                 // Clear the progress bar
                 self.progressReport(.{ .state = .remove });
+                self.programStatusReport(.{ .state = .clear });
             },
             .start_hyperlink => try self.terminal.screens.active.startHyperlink(value.uri, value.id),
             .end_hyperlink => self.terminal.screens.active.endHyperlink(),
-            .semantic_prompt => try self.terminal.semanticPrompt(value),
+            .semantic_prompt => {
+                try self.terminal.semanticPrompt(value);
+                if (value.action == .fresh_line_new_prompt) {
+                    if (self.effects.shell_prompt) |func| func(self);
+                }
+            },
             .mouse_shape => self.terminal.mouse_shape = value,
             .color_operation => self.colorOperation(
                 &value.requests,
@@ -496,6 +506,7 @@ pub const Handler = struct {
             .window_title => try self.windowTitle(value.title),
             .report_pwd => try self.reportPwd(value.url),
             .progress_report => self.progressReport(value),
+            .program_status => self.programStatus(value),
             .xtversion => self.reportXtversion(),
             .clipboard_contents => self.clipboardContents(
                 value.kind,
@@ -623,6 +634,31 @@ pub const Handler = struct {
 
     fn progressReport(self: *Handler, report: osc.Command.ProgressReport) void {
         const func = self.effects.progress_report orelse return;
+        func(self, report);
+    }
+
+    fn programStatus(self: *Handler, cmd: osc.Command.ProgramStatus) void {
+        switch (cmd) {
+            .report => |report| self.programStatusReport(report),
+
+            // Only claim support when something handles the reports. The
+            // reply is always the same fixed bytes. The specification
+            // never allows sending report contents back to the program.
+            .query => |terminator| if (self.effects.program_status != null) {
+                switch (terminator) {
+                    inline else => |t| self.writePty(
+                        "\x1b]7501;?" ++ comptime t.string(),
+                    ),
+                }
+            },
+        }
+    }
+
+    fn programStatusReport(
+        self: *Handler,
+        report: osc.Command.ProgramStatus.Report,
+    ) void {
+        const func = self.effects.program_status orelse return;
         func(self, report);
     }
 

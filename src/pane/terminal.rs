@@ -167,6 +167,7 @@ pub(crate) struct ProcessBytesResult {
     pub render_delay: Option<Duration>,
     pub terminal_title_changed: bool,
     pub terminal_bells: u16,
+    pub program_status: Vec<crate::ghostty::ProgramStatusEvent>,
     pub clipboard_writes: Vec<Vec<u8>>,
     pub reported_cwd: Option<std::path::PathBuf>,
     pub terminal_responses: Vec<Bytes>,
@@ -1155,6 +1156,9 @@ impl GhosttyPaneTerminal {
         mut terminal: crate::ghostty::Terminal,
         _response_writer: mpsc::Sender<Bytes>,
     ) -> std::io::Result<Self> {
+        terminal
+            .enable_program_status()
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         let pending_pty_responses = Arc::new(Mutex::new(Vec::new()));
         let callback_responses = pending_pty_responses.clone();
         terminal
@@ -1365,12 +1369,14 @@ impl GhosttyPaneTerminal {
                 render_delay: None,
                 terminal_title_changed: false,
                 terminal_bells: 0,
+                program_status: Vec::new(),
                 clipboard_writes: Vec::new(),
                 reported_cwd: None,
                 terminal_responses: Vec::new(),
             };
         };
 
+        let _ = core.terminal.take_program_status_events();
         let _ = core.terminal.take_pwd_changes();
         // Restored history may have exercised terminal callbacks before this live PTY write.
         // Those effects must not be delivered as live pane output.
@@ -1419,6 +1425,7 @@ impl GhosttyPaneTerminal {
             c1_xtgettcap_responses,
             &mut terminal_responses,
         );
+        let program_status = core.terminal.take_program_status_events();
         let terminal_bells = core.terminal.take_bell_count();
         let clipboard_writes = core.terminal.take_clipboard_writes();
         let reported_cwd = core
@@ -1482,6 +1489,7 @@ impl GhosttyPaneTerminal {
             render_delay,
             terminal_title_changed,
             terminal_bells,
+            program_status,
             clipboard_writes,
             reported_cwd,
             terminal_responses,
@@ -3660,6 +3668,16 @@ pub(crate) fn test_encode_key_for_app(
     let pane = GhosttyPaneTerminal::new(terminal, tx.clone()).expect("pane terminal");
     pane.process_pty_bytes(PaneId::from_raw(1), 0, app_output, &tx);
     pane.encode_terminal_key_once(key)
+}
+
+#[cfg(test)]
+pub(crate) fn test_program_status_for_app(bytes: &[u8]) -> Vec<crate::ghostty::ProgramStatusEvent> {
+    let (tx, _rx) = mpsc::channel(4);
+    let vt = crate::ghostty::Terminal::new(80, 24, 0).unwrap();
+    let parser = GhosttyPaneTerminal::new(vt, tx.clone()).unwrap();
+    parser
+        .process_pty_bytes(PaneId::from_raw(1), 0, bytes, &tx)
+        .program_status
 }
 
 #[cfg(test)]

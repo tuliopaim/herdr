@@ -63,6 +63,13 @@ If you build a coding agent, [Add Herdr support to your agent](/docs/add-herdr-s
 
 For agents Herdr supports, Herdr finds the agent's process in each pane and reads the live bottom of the pane, not the part you scrolled to. Rules in a detection manifest decide whether that screen means `idle`, `working`, or `blocked`. When an integration also reports state, Herdr uses those reports instead of reading the screen.
 
+Programs can also report state over the PTY with OSC 7501. Pi 1.3 enables its native reporter when Herdr answers its support query. Valid protocol records take precedence over socket lifecycle reports and screen detection. Keep the Pi socket integration installed for session identity and resume support.
+
+Records are local to each terminal. Blocked records take priority over working records, then error, done, and idle. The newest update wins ties. Hierarchical IDs inherit `app` and support subtree clear. Herdr retains up to 256 records and evicts the least recently updated record at the limit. A shell prompt or process exit removes idle, working, and blocked records. Done and error survive until replaced, cleared, or a full terminal reset. Both map to Herdr's existing idle/unseen completion model; `agent explain --json` preserves their raw state under `program_status`. Protocol records are ephemeral and are not included in restart or handoff state.
+
+OSC 7501 is unauthenticated terminal output, not process or session identity. Messages and titles are validated but are not displayed or used to infer state.
+
+
 For agents that support Herdr, the agent's own reports decide the state.
 
 ## VMs and sandbox wrappers

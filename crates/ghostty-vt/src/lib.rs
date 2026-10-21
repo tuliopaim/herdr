@@ -497,14 +497,97 @@ type WritePtyCallback = dyn FnMut(&[u8]) + Send;
 
 const MAX_CLIPBOARD_BYTES: usize = 192 * 1024;
 
+/// Validated OSC 7501 data copied from the synchronous VT callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramStatus {
+    pub state: ProgramStatusState,
+    pub id: String,
+    pub app: String,
+    pub title: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramStatusState {
+    Idle,
+    Working,
+    Done,
+    Blocked,
+    Error,
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgramStatusEvent {
+    Report(ProgramStatus),
+    ShellPrompt,
+}
+
 #[derive(Default)]
 struct TerminalCallbackState {
     write_pty: Option<Box<WritePtyCallback>>,
     bell_count: u16,
+    program_status: Vec<ProgramStatusEvent>,
+    program_status_active: bool,
     pwd_changes: Vec<Vec<u8>>,
     clipboard_writes: Vec<Vec<u8>>,
     size_report: ffi::GhosttySizeReportSize,
     color_scheme: Option<ColorScheme>,
+}
+
+unsafe extern "C" fn program_status_trampoline(
+    _terminal: ffi::GhosttyTerminal,
+    userdata: *mut c_void,
+    report: *const ffi::GhosttyTerminalProgramStatus,
+) {
+    if userdata.is_null() || report.is_null() {
+        return;
+    }
+    // SAFETY: the installed userdata and report are live for this synchronous callback.
+    let state = unsafe { &mut *userdata.cast::<TerminalCallbackState>() };
+    let report = unsafe { &*report };
+    let status = match report.state {
+        0 => ProgramStatusState::Idle,
+        1 => ProgramStatusState::Working,
+        2 => ProgramStatusState::Done,
+        3 => ProgramStatusState::Blocked,
+        4 => ProgramStatusState::Error,
+        5 => ProgramStatusState::Clear,
+        _ => return,
+    };
+    fn copy(value: ffi::GhosttyString) -> String {
+        if value.len == 0 {
+            return String::new();
+        }
+        // SAFETY: strings belong to the validated report and remain live during the callback.
+        String::from_utf8_lossy(unsafe { slice::from_raw_parts(value.ptr.cast(), value.len) })
+            .into_owned()
+    }
+    state.program_status_active = status != ProgramStatusState::Clear || report.id.len != 0;
+    state
+        .program_status
+        .push(ProgramStatusEvent::Report(ProgramStatus {
+            state: status,
+            id: copy(report.id),
+            app: copy(report.app),
+            title: copy(report.title),
+            message: copy(report.message),
+        }));
+}
+
+unsafe extern "C" fn shell_prompt_trampoline(
+    _terminal: ffi::GhosttyTerminal,
+    userdata: *mut c_void,
+) {
+    if userdata.is_null() {
+        return;
+    }
+    // SAFETY: userdata belongs to this terminal and the callback is synchronous.
+    let state = unsafe { &mut *userdata.cast::<TerminalCallbackState>() };
+    if state.program_status_active {
+        state.program_status.push(ProgramStatusEvent::ShellPrompt);
+        state.program_status_active = false;
+    }
 }
 
 unsafe extern "C" fn bell_trampoline(_terminal: ffi::GhosttyTerminal, userdata: *mut c_void) {
@@ -1139,6 +1222,29 @@ impl Terminal {
         }
         self.kitty_png_forwarding = enabled;
         Ok(())
+    }
+
+    pub fn enable_program_status(&mut self) -> Result<(), Error> {
+        // SAFETY: both function pointers have the C signatures declared by these options.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,
+                (program_status_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SHELL_PROMPT,
+                (shell_prompt_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+        }
+        Ok(())
+    }
+
+    pub fn take_program_status_events(&mut self) -> Vec<ProgramStatusEvent> {
+        mem::take(&mut self.callback_state.program_status)
     }
 
     pub fn set_write_pty_callback<F>(&mut self, callback: F) -> Result<(), Error>
