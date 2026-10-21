@@ -2086,6 +2086,41 @@ mod tests {
     }
 
     #[test]
+    fn program_status_pty_parser_drives_server_events_and_completion() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub.clone(),
+        );
+        let workspace = crate::workspace::Workspace::test_new("program-status");
+        let pane_id = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.terminal_id(pane_id).cloned().unwrap();
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        // Coalesced PTY reads must retain completion and blocker transitions.
+        let events = crate::pane::test_program_status_for_app(
+            b"\x1b]7501;state=working:app=pi\x07\x1b]7501;state=blocked:app=pi\x07\x1b]7501;state=done:app=pi\x07");
+        app.handle_internal_event(AppEvent::ProgramStatusReported {
+            pane_id,
+            events,
+            observed_at: std::time::Instant::now(),
+        });
+        let terminal = &app.state.terminals[&terminal_id];
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert!(terminal.last_agent_completion_seq.is_some());
+        assert_eq!(terminal.program_status_explain().unwrap()["state"], "done");
+        let events = event_hub.events_after(0);
+        assert!(events.iter().any(|(_, event)| matches!(
+            event.event,
+            crate::api::schema::EventKind::PaneAgentStatusChanged
+        )));
+    }
+
+    #[test]
     fn idle_agent_exit_emits_release_event_without_a_state_change() {
         for agent_name in [None, Some("reviewer")] {
             let event_hub = crate::api::EventHub::default();

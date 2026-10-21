@@ -42,10 +42,10 @@ use self::agent_detection::{
     ScreenDetectionPublishInput, AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW,
 };
 use self::background_agent::{AgentJobStatus, AgentJobTracker};
-#[cfg(test)]
-pub(crate) use self::terminal::test_encode_key_for_app;
 #[cfg(unix)]
 pub use self::terminal::InputState;
+#[cfg(test)]
+pub(crate) use self::terminal::{test_encode_key_for_app, test_program_status_for_app};
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
 pub(crate) use self::terminal::{
     TerminalCompressionStep, TerminalDirtyPatch, TerminalDirtyPatchOutcome, TerminalReadSnapshot,
@@ -2590,6 +2590,16 @@ impl PaneRuntime {
                 content_seq.fetch_add(1, Ordering::Release);
                 drop(_content_write_guard);
                 compression_wake.wake();
+                if !result.program_status.is_empty() {
+                    // Do not drop authority changes when the server event queue is busy.
+                    if let Err(err) = read_events.blocking_send(AppEvent::ProgramStatusReported {
+                        pane_id,
+                        events: result.program_status,
+                        observed_at: std::time::Instant::now(),
+                    }) {
+                        warn!(pane = pane_id.raw(), %err, "failed to deliver program status");
+                    }
+                }
                 publish_terminal_bells(pane_id, result.terminal_bells, &read_events);
                 observe_detection_content_change(bytes, &detection_content_seq);
                 let title_requested =
@@ -2793,6 +2803,16 @@ impl PaneRuntime {
                 content_seq.fetch_add(1, Ordering::Release);
                 drop(_content_write_guard);
                 compression_wake.wake();
+                if !result.program_status.is_empty() {
+                    // Do not drop authority changes when the server event queue is busy.
+                    if let Err(err) = events.blocking_send(AppEvent::ProgramStatusReported {
+                        pane_id,
+                        events: result.program_status,
+                        observed_at: std::time::Instant::now(),
+                    }) {
+                        warn!(pane = pane_id.raw(), %err, "failed to deliver program status");
+                    }
+                }
                 publish_terminal_bells(pane_id, result.terminal_bells, &events);
                 if agent_detection == AgentDetection::Enabled {
                     observe_detection_content_change(bytes, &detection_content_seq);

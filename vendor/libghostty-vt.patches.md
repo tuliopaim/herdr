@@ -272,3 +272,49 @@ verification:
 (cd vendor/libghostty-vt && zig build test-lib-vt -Dtest-filter='cursorAbsolute keeps the hyperlink when style migration splits the page')
 just maintenance-test
 ```
+
+## 0009 backport OSC 7501 program status
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0009-program-status.patch`
+
+herdr issue: none; private fork native Pi 1.3 status receiving
+
+upstream pr: https://github.com/ghostty-org/ghostty/pull/14560
+
+upstream discussion: https://www.superlogical.com/rex/docs/build/program-status
+
+vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+
+local files:
+
+- `vendor/libghostty-vt/include/ghostty/vt/osc.h`
+- `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
+- `vendor/libghostty-vt/src/terminal/c/terminal.zig`
+- `vendor/libghostty-vt/src/terminal/c/types.zig`
+- `vendor/libghostty-vt/src/terminal/osc.zig`
+- `vendor/libghostty-vt/src/terminal/osc/parsers.zig`
+- `vendor/libghostty-vt/src/terminal/osc/parsers/program_status.zig`
+- `vendor/libghostty-vt/src/terminal/stream.zig`
+- `vendor/libghostty-vt/src/terminal/stream_terminal.zig`
+
+reason: Backport upstream commit `a4aacd918ba9e79929ff608034c60a4341773ef0`
+without upgrading the vendor. The parser validates bounded untrusted reports;
+the effect gates support negotiation and emits clear on RIS. Local adaptations
+use free option slots 42 and 43, bound capture before allocation, suppress
+CAN/SUB-aborted reports, and expose OSC 133 A through a small shell-prompt
+callback because this base lacks upstream semantic prompt effects. Existing
+ABI values remain unchanged. The embedder owns record lifetime and authority.
+
+remove when: a future vendor includes upstream OSC 7501 and semantic prompt
+callbacks, and the Rust wrapper is migrated to their option values and API.
+
+verification:
+
+```sh
+just libghostty-bindings
+just test-one program_status
+just maintenance-test
+just build
+```

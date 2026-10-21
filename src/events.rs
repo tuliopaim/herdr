@@ -76,6 +76,11 @@ pub(crate) struct WorktreeReadData {
 /// An event from a background task to the main loop.
 #[derive(Debug)]
 pub enum AppEvent {
+    ProgramStatusReported {
+        pane_id: PaneId,
+        events: Vec<crate::ghostty::ProgramStatusEvent>,
+        observed_at: Instant,
+    },
     /// A pane's child process exited.
     PaneDied {
         pane_id: PaneId,

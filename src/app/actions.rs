@@ -1466,6 +1466,18 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            AppEvent::ProgramStatusReported {
+                pane_id,
+                events,
+                observed_at,
+            } => events
+                .into_iter()
+                .filter_map(|event| {
+                    self.update_terminal_state(pane_id, |terminal| {
+                        Some(terminal.apply_program_status(vec![event], observed_at))
+                    })
+                })
+                .collect(),
             AppEvent::StateChanged {
                 pane_id,
                 agent,
