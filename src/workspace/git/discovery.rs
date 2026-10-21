@@ -182,6 +182,9 @@ pub(super) fn read_git_ref_file(path: &Path) -> Option<String> {
 pub fn git_branch(cwd: &Path) -> Option<String> {
     let repo_root = git_repo_root(cwd)?;
     let git_dir = git_dir_for_repo_root(&repo_root)?;
+    if git_dir_is_bare(&git_dir) {
+        return None;
+    }
     let git_common_dir = git_common_dir_for_git_dir(&git_dir);
     if git_ref_storage_is_reftable(&git_common_dir) {
         return git_symbolic_head_short(&repo_root);
@@ -366,7 +369,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use crate::workspace::git::test_support::run_git;
+    use crate::workspace::git::{
+        status::{git_status_snapshot_for_cwd_with_demand, GitStatusRefreshDemand},
+        test_support::run_git,
+    };
 
     fn temp_test_dir(name: &str) -> PathBuf {
         let unique = format!(
@@ -703,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_dot_bare_source_and_checkout_use_container_repo_name() {
+    fn embedded_dot_bare_container_keeps_repo_name_without_checkout_branch() {
         let base = temp_test_dir("embedded-dot-bare");
         let seed = base.join("seed");
         let repo = base.join("reported-repo");
@@ -741,6 +747,36 @@ mod tests {
                 "HEAD",
             ],
         );
+
+        run_git(&seed, &["branch", "-M", "main"]);
+        assert_eq!(git_branch(&seed).as_deref(), Some("main"));
+        assert_eq!(git_branch(&repo), None);
+        assert_eq!(git_branch(&bare), None);
+        assert_eq!(git_branch(&checkout).as_deref(), Some("develop"));
+
+        for demand in [
+            GitStatusRefreshDemand::ALL,
+            GitStatusRefreshDemand {
+                branch: true,
+                ahead_behind: false,
+            },
+        ] {
+            for (cwd, expected) in [
+                (&seed, Some("main")),
+                (&repo, None),
+                (&bare, None),
+                (&checkout, Some("develop")),
+            ] {
+                let mut cached = None;
+                for _ in 0..2 {
+                    let (snapshot, update) =
+                        git_status_snapshot_for_cwd_with_demand(cwd, cached.as_ref(), demand);
+                    assert_eq!(snapshot.branch.as_deref(), expected);
+                    assert!(snapshot.space.is_some());
+                    cached = update;
+                }
+            }
+        }
 
         let source = git_space_metadata(&repo).unwrap();
         let linked = git_space_metadata(&checkout).unwrap();
