@@ -214,6 +214,9 @@ pub(super) fn git_status_fingerprint(cwd: &Path) -> Option<GitStatusFingerprint>
 }
 
 fn fingerprint(mut repo: RepoContext, include_upstream: bool) -> Option<GitStatusFingerprint> {
+    if repo.0.is_bare {
+        return None;
+    }
     let head = read_head_identity(&repo.0, repo.1)?;
     let upstream = match &head {
         GitHeadIdentity::Branch { short_name, .. } if include_upstream => {
