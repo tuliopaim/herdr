@@ -19,6 +19,10 @@ pub(in crate::client::shell) fn workspace_active_background(
     // The fallback cursor shares the active-row color; only fill the cursor while navigating.
     if navigating && palette.selection_bg == ratatui::style::Color::Reset {
         palette.sidebar_bg
+    } else if !navigating && palette.surface0 != ratatui::style::Color::Reset {
+        // active_row_bg matches the panel in several themes; surface0 stays
+        // visible. Navigation keeps active_row_bg so the preview stays distinct.
+        palette.surface0
     } else {
         palette.active_row_bg
     }
@@ -331,15 +335,13 @@ pub(crate) fn render_sidebar(
             dragged,
             palette,
         );
-        if workspace.focused {
-            render_focus_bar(buffer, rect, palette);
-        }
         let group_toggle = render_parent_group_toggle(
             buffer,
             rect,
             snapshot,
             entry.index,
             state.collapsed_groups,
+            status,
             palette,
         );
         hits.workspaces.push(WorkspaceHit {
@@ -637,28 +639,23 @@ fn sidebar_status_icon(
     }
 }
 
-pub(in crate::client::shell) fn render_focus_bar(
-    buffer: &mut Buffer,
-    rect: Rect,
-    palette: &Palette,
-) {
-    for y in rect.y..rect.bottom() {
-        if let Some(cell) = buffer.cell_mut((rect.x, y)) {
-            cell.set_symbol("▌").set_fg(palette.mauve);
-        }
-    }
-}
-
 pub(in crate::client::shell) fn render_parent_group_toggle(
     buffer: &mut Buffer,
     workspace_rect: Rect,
     snapshot: &ClientShellSnapshot,
     workspace_index: usize,
     collapsed_groups: &HashSet<String>,
+    status: crate::api::schema::AgentStatus,
     palette: &Palette,
 ) -> Option<(Rect, String)> {
     let key = parent_group_key(snapshot, workspace_index)?;
-    let toggle = Rect::new(workspace_rect.x, workspace_rect.y, 1, 1);
+    // The toggle takes the status icon's slot and carries its color.
+    let toggle = Rect::new(workspace_rect.x.saturating_add(1), workspace_rect.y, 1, 1);
+    let color = if status == crate::api::schema::AgentStatus::Unknown {
+        palette.overlay0
+    } else {
+        status_color(status, palette)
+    };
     put_text(
         buffer,
         toggle.x,
@@ -669,7 +666,7 @@ pub(in crate::client::shell) fn render_parent_group_toggle(
         } else {
             "▾"
         },
-        Style::default().fg(palette.accent),
+        Style::default().fg(color),
     );
     Some((toggle, key))
 }

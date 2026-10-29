@@ -326,7 +326,7 @@ pub(super) fn render_agent_row(
 ) {
     let palette = &config.palette;
     let row_style = if row.focused {
-        Style::default().bg(palette.active_row_bg)
+        Style::default().bg(super::sidebar::workspace_active_background(palette, false))
     } else {
         Style::default()
     };

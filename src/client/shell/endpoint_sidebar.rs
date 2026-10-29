@@ -487,15 +487,13 @@ pub(super) fn render_expanded(
                             .add_modifier(Modifier::DIM),
                     );
                 }
-                if endpoint_active && workspace.focused {
-                    super::sidebar::render_focus_bar(buffer, rect, palette);
-                }
                 let group_toggle = super::sidebar::render_parent_group_toggle(
                     buffer,
                     nested,
                     snapshot,
                     entry.index,
                     collapsed_groups,
+                    status,
                     palette,
                 );
                 hits.workspaces.push(WorkspaceHit {

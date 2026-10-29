@@ -1143,13 +1143,13 @@ fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
         .rect;
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: remote_parent.x + 3,
+        column: remote_parent.x + 5,
         row: remote_parent.y,
         modifiers: KeyModifiers::empty(),
     })]);
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Drag(MouseButton::Left),
-        column: remote_child.x + 3,
+        column: remote_child.x + 5,
         row: remote_child.bottom(),
         modifiers: KeyModifiers::empty(),
     })]);
@@ -1419,7 +1419,7 @@ fn active_workspace_is_the_only_highlight_when_machine_is_expanded() {
     );
     assert_eq!(
         buffer[(workspace.x + 2, workspace.y)].bg,
-        state.config.palette.active_row_bg
+        state.config.palette.surface0
     );
 
     state.collapsed_endpoints.insert(endpoint_id.clone());
