@@ -35,6 +35,23 @@ impl ClientShellState {
         }
     }
 
+    fn update_sidebar_section_divider_hover(
+        &mut self,
+        mouse: MouseEvent,
+        outcome: &mut ClientShellInput,
+    ) {
+        let hover = super::contains(self.hits.sidebar_section_divider, (mouse.column, mouse.row));
+        if hover != self.sidebar_section_divider_hover {
+            self.sidebar_section_divider_hover = hover;
+            outcome.repaint = true;
+        }
+    }
+
+    pub(super) fn sidebar_section_divider_active(&self) -> bool {
+        self.sidebar_section_divider_hover
+            || matches!(self.chrome_drag, Some(ClientChromeDrag::SidebarSection))
+    }
+
     fn pane_scrollbar_offset(
         hit: &PaneHit,
         row: u16,
@@ -682,6 +699,7 @@ impl ClientShellState {
     /// the sidebar toggle takes precedence over the agent scrollbar beneath it.
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
         self.update_link_hover(mouse, outcome);
+        self.update_sidebar_section_divider_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
         if self.mode == ClientShellMode::Navigate
             && self.workspace_preview_action_blocked()

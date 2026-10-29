@@ -295,6 +295,45 @@ fn client_owned_sidebar_dividers_resize_live() {
 }
 
 #[test]
+fn sidebar_section_divider_highlights_on_hover() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let buffer = state
+        .compose(106, 30)
+        .expect("sidebar frame")
+        .to_ratatui_buffer()
+        .expect("sidebar buffer");
+    let divider = state.hits.sidebar_section_divider;
+    assert!(divider.width > 0);
+    let accent = state.config.palette.accent;
+    assert_ne!(buffer[(divider.x, divider.y)].fg, accent);
+
+    let hover = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: divider.x + 2,
+        row: divider.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(hover.repaint);
+    let buffer = state
+        .compose(106, 30)
+        .expect("hovered frame")
+        .to_ratatui_buffer()
+        .expect("hovered buffer");
+    assert_eq!(buffer[(divider.x, divider.y)].fg, accent);
+
+    let leave = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: divider.x + 2,
+        row: divider.y.saturating_sub(3),
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(leave.repaint);
+    assert!(!state.sidebar_section_divider_hover);
+}
+
+#[test]
 fn context_menus_capture_stable_targets_and_route_actions() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

@@ -28,6 +28,17 @@ pub(in crate::client::shell) fn render_sidebar_background(
     }
 }
 
+pub(super) fn highlight_sidebar_section_divider(
+    buffer: &mut Buffer,
+    divider: Rect,
+    active: bool,
+    palette: &Palette,
+) {
+    if active {
+        buffer.set_style(divider, Style::default().fg(palette.accent));
+    }
+}
+
 pub(super) fn render_mode_bar(
     buffer: &mut Buffer,
     pane_area: Rect,
@@ -243,6 +254,7 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) reveal_focused_tab: &'a mut bool,
     pub(super) sidebar_collapsed: bool,
     pub(super) sidebar_section_split: f32,
+    pub(super) sidebar_section_divider_active: bool,
     pub(super) tab_drag_insert_index: Option<usize>,
     pub(super) selected_workspace_id: Option<&'a WorkspaceNavigationTarget>,
     pub(super) reveal_navigation_workspace: &'a mut bool,

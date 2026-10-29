@@ -438,6 +438,12 @@ pub(crate) fn render_sidebar(
         state.agent_scroll,
         hits,
     );
+    super::render::highlight_sidebar_section_divider(
+        buffer,
+        hits.sidebar_section_divider,
+        state.sidebar_section_divider_active,
+        palette,
+    );
 
     hits.sidebar_toggle = Rect::new(
         area.right().saturating_sub(2),

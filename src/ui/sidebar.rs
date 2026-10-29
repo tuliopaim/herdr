@@ -47,8 +47,25 @@ fn sidebar_section_heights(total_height: u16, split_ratio: f32) -> (u16, u16) {
     )
 }
 
+const SIDEBAR_HORIZONTAL_PADDING: u16 = 1;
+
+/// Sidebar content area: excludes the right separator column and keeps one
+/// blank column of padding on each side.
+fn sidebar_content_area(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(1);
+    if width <= SIDEBAR_HORIZONTAL_PADDING * 2 + 4 {
+        return Rect::new(area.x, area.y, width, area.height);
+    }
+    Rect::new(
+        area.x + SIDEBAR_HORIZONTAL_PADDING,
+        area.y,
+        width - SIDEBAR_HORIZONTAL_PADDING * 2,
+        area.height,
+    )
+}
+
 pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, Rect) {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    let content = sidebar_content_area(area);
     if content.is_empty() {
         return (Rect::default(), Rect::default());
     }
@@ -66,7 +83,7 @@ pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, 
 }
 
 pub(crate) fn sidebar_section_divider_rect(area: Rect, split_ratio: f32) -> Rect {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    let content = sidebar_content_area(area);
     if content.width == 0 || content.height < 6 {
         return Rect::default();
     }

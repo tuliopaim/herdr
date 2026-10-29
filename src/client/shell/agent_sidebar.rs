@@ -103,7 +103,7 @@ pub(super) fn render_agent_panel_header(
         area.y,
         area.width,
         &"─".repeat(area.width as usize),
-        Style::default().fg(config.palette.surface_dim),
+        Style::default().fg(config.palette.surface1),
     );
     if area.height < 2 {
         return false;

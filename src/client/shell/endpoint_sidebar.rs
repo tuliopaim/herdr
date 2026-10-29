@@ -345,6 +345,7 @@ pub(super) fn render_expanded(
                     entry,
                 }),
             ) if endpoint == next_endpoint => u16::from(!entry.indented) * config.spaces.row_gap,
+            (Row::Workspace { .. }, Some(Row::Endpoint(_))) => 1,
             _ => 0,
         })
         .collect::<Vec<_>>();
@@ -562,6 +563,12 @@ pub(super) fn render_expanded(
         config,
         state.agent_scroll,
         hits,
+    );
+    super::render::highlight_sidebar_section_divider(
+        buffer,
+        hits.sidebar_section_divider,
+        state.sidebar_section_divider_active,
+        palette,
     );
     hits.sidebar_toggle = Rect::new(
         area.right().saturating_sub(2),
