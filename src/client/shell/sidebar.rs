@@ -215,15 +215,14 @@ pub(crate) fn render_sidebar(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    put_text(
+    render_workspace_header(
         buffer,
-        workspace_area.x,
-        workspace_area.y,
-        workspace_area.width,
+        workspace_area,
         " spaces",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
+        super::super::global_menu::global_menu_attention(snapshot),
+        config.mouse_capture,
+        palette,
+        hits,
     );
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
@@ -231,9 +230,7 @@ pub(crate) fn render_sidebar(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
         workspace_area.width,
-        workspace_area
-            .height
-            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+        workspace_area.height.saturating_sub(WORKSPACE_HEADER_ROWS),
     );
     hits.workspace_body = body;
     let row_heights = entries
@@ -334,6 +331,9 @@ pub(crate) fn render_sidebar(
             dragged,
             palette,
         );
+        if workspace.focused {
+            render_focus_bar(buffer, rect, palette);
+        }
         let group_toggle = render_parent_group_toggle(
             buffer,
             rect,
@@ -361,10 +361,10 @@ pub(crate) fn render_sidebar(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
-    if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
-        *row >= workspace_area.y.saturating_add(1)
-            && *row < workspace_area.bottom().saturating_sub(1)
-    }) {
+    if let Some(row) = state
+        .workspace_drop_indicator_row
+        .filter(|row| *row >= workspace_area.y.saturating_add(1) && *row < workspace_area.bottom())
+    {
         put_text(
             buffer,
             body.x,
@@ -373,61 +373,6 @@ pub(crate) fn render_sidebar(
             &"─".repeat(body.width as usize),
             Style::default().fg(palette.accent),
         );
-    }
-
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            5.min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.width,
-            " new",
-            Style::default().fg(palette.overlay0),
-        );
-        let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(launcher_width),
-            footer_y,
-            launcher_width,
-            1,
-        );
-        if attention {
-            let start_x = workspace_area.right().saturating_sub(6);
-            put_text(
-                buffer,
-                start_x,
-                footer_y,
-                2,
-                "● ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            put_text(
-                buffer,
-                start_x.saturating_add(2),
-                footer_y,
-                4,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        } else {
-            put_right_text(
-                buffer,
-                workspace_area,
-                footer_y,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        }
     }
 
     super::render_agent_panel(
@@ -606,6 +551,104 @@ pub(in crate::client::shell) fn workspace_close_is_group(
     has_child
 }
 
+/// Section title on the left, `+ new` and `menu` actions on the right.
+pub(in crate::client::shell) fn render_workspace_header(
+    buffer: &mut Buffer,
+    workspace_area: Rect,
+    title: &str,
+    menu_attention: bool,
+    mouse_capture: bool,
+    palette: &Palette,
+    hits: &mut ShellHitMap,
+) {
+    if workspace_area.height == 0 {
+        return;
+    }
+    let y = workspace_area.y;
+    put_text(
+        buffer,
+        workspace_area.x,
+        y,
+        workspace_area.width,
+        title,
+        Style::default()
+            .fg(palette.overlay0)
+            .add_modifier(Modifier::BOLD),
+    );
+    if !mouse_capture {
+        return;
+    }
+    let menu = if menu_attention { "● menu" } else { "menu" };
+    // The click target extends two cells left of the label.
+    let menu_width = (super::render::display_width(menu) + 2).min(workspace_area.width);
+    hits.global_launcher = Rect::new(
+        workspace_area.right().saturating_sub(menu_width),
+        y,
+        menu_width,
+        1,
+    );
+    put_right_text(
+        buffer,
+        workspace_area,
+        y,
+        "menu",
+        Style::default().fg(palette.overlay0),
+    );
+    if menu_attention {
+        put_text(
+            buffer,
+            workspace_area.right().saturating_sub(6),
+            y,
+            1,
+            "●",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+    let new = "+ new";
+    let new_width = super::render::display_width(new);
+    let new_x = hits.global_launcher.x.saturating_sub(new_width);
+    let title_end = workspace_area.x + super::render::display_width(title);
+    if new_x <= title_end {
+        hits.new_workspace = Rect::default();
+        return;
+    }
+    hits.new_workspace = Rect::new(new_x, y, new_width, 1);
+    put_text(
+        buffer,
+        new_x,
+        y,
+        new_width,
+        new,
+        Style::default().fg(palette.overlay0),
+    );
+}
+
+/// Rows without an agent leave the icon slot blank instead of drawing `·`.
+fn sidebar_status_icon(
+    status: crate::api::schema::AgentStatus,
+    indicators: crate::config::StatusIndicatorStyle,
+) -> &'static str {
+    if status == crate::api::schema::AgentStatus::Unknown {
+        " "
+    } else {
+        status_icon(status, indicators)
+    }
+}
+
+pub(in crate::client::shell) fn render_focus_bar(
+    buffer: &mut Buffer,
+    rect: Rect,
+    palette: &Palette,
+) {
+    for y in rect.y..rect.bottom() {
+        if let Some(cell) = buffer.cell_mut((rect.x, y)) {
+            cell.set_symbol("▌").set_fg(palette.mauve);
+        }
+    }
+}
+
 pub(in crate::client::shell) fn render_parent_group_toggle(
     buffer: &mut Buffer,
     workspace_rect: Rect,
@@ -615,12 +658,7 @@ pub(in crate::client::shell) fn render_parent_group_toggle(
     palette: &Palette,
 ) -> Option<(Rect, String)> {
     let key = parent_group_key(snapshot, workspace_index)?;
-    let toggle = Rect::new(
-        workspace_rect.right().saturating_sub(1),
-        workspace_rect.y,
-        1,
-        1,
-    );
+    let toggle = Rect::new(workspace_rect.x, workspace_rect.y, 1, 1);
     put_text(
         buffer,
         toggle.x,
@@ -715,17 +753,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
         }
         let mut x = area.x;
         if entry.indented {
-            let prefix = if row_index == 0 {
-                if entry.last_child {
-                    "   └─ "
-                } else {
-                    "   ├─ "
-                }
-            } else if entry.last_child {
-                "        "
-            } else {
-                "   │    "
-            };
+            let prefix = if row_index == 0 { "   " } else { "     " };
             x = put_segment(
                 buffer,
                 x,
@@ -759,7 +787,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
         let spans = crate::ui::resolved_token_spans(
             row,
             (
-                status_icon(status, indicators),
+                sidebar_status_icon(status, indicators),
                 Style::default().fg(status_color(status, palette)),
             ),
             Style::default().fg(status_color(status, palette)),

@@ -85,16 +85,10 @@ pub(super) fn render_list_scrollbar(
     let Some(thumb) = crate::ui::scrollbar_thumb(metrics, track) else {
         return;
     };
-    for row in track.y..track.bottom() {
-        if let Some(cell) = buffer.cell_mut((track.x, row)) {
-            cell.set_symbol("▕")
-                .set_style(Style::default().fg(palette.surface_dim));
-        }
-    }
     for row in thumb.top..thumb.top.saturating_add(thumb.len) {
         if let Some(cell) = buffer.cell_mut((track.x, row)) {
             cell.set_symbol("▕")
-                .set_style(Style::default().fg(palette.overlay0));
+                .set_style(Style::default().fg(palette.surface1));
         }
     }
 }
