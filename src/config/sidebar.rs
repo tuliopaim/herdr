@@ -441,6 +441,7 @@ impl Default for AgentsSidebarConfig {
     fn default() -> Self {
         Self {
             rows: vec![
+                vec![AgentSidebarToken::Pane],
                 vec![
                     AgentSidebarToken::StateIcon,
                     AgentSidebarToken::Machine,
@@ -492,6 +493,7 @@ mod tests {
         assert_eq!(
             config.agents.rows,
             vec![
+                vec![AgentSidebarToken::Pane],
                 vec![
                     AgentSidebarToken::StateIcon,
                     AgentSidebarToken::Machine,

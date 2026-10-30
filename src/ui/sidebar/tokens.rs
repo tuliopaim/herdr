@@ -231,6 +231,45 @@ mod tests {
     }
 
     #[test]
+    fn manual_pane_title_adds_a_primary_row_and_preserves_untitled_layout() {
+        let config = AgentsSidebarConfig::default();
+        let mut entry = entry();
+        let untitled = agent_rows(&config, context(&entry), "working");
+        assert_eq!(untitled.len(), 2);
+        assert_eq!(untitled[0][0].kind, ResolvedTokenKind::StateIcon);
+
+        entry.pane = Some("Fix agent titles".into());
+        let titled = agent_rows(&config, context(&entry), "working");
+        assert_eq!(titled.len(), 3);
+        assert_eq!(
+            titled[0],
+            vec![ResolvedToken::unstyled(ResolvedTokenKind::Pane(
+                "Fix agent titles".into()
+            ))]
+        );
+
+        let primary = ratatui::style::Style::default()
+            .fg(ratatui::style::Color::Green)
+            .add_modifier(ratatui::style::Modifier::BOLD);
+        let secondary = ratatui::style::Style::default().fg(ratatui::style::Color::Blue);
+        let spans = super::super::resolved_token_spans(
+            &titled[0],
+            ("*", secondary),
+            secondary,
+            primary,
+            secondary,
+            secondary,
+            &super::super::Palette::catppuccin(),
+            40,
+        );
+        assert_eq!(spans[0].style.fg, primary.fg);
+        assert!(spans[0]
+            .style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD));
+    }
+
+    #[test]
     fn conditional_styles_merge_first_match_and_keep_missing_values_absent() {
         let config: AgentsSidebarConfig = toml::from_str(r##"
 rows = [["state_icon", { token = "machine", fg = "#fff", bold = true, dim = true, rules = [{ equals = "Local", fg = "#f00", bold = false }, { contains = "Loc", fg = "#0f0", dim = false }] }], [{ token = "$missing", rules = [{ equals = "", bold = true }] }]]
