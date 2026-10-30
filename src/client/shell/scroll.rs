@@ -2,6 +2,20 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
 use super::Palette;
 
+pub(super) fn entry_row_height(content_lines: usize) -> u16 {
+    content_lines.clamp(1, u16::MAX as usize) as u16
+}
+
+/// Expanded desktop entries inset their content one cell from each edge of the row background.
+pub(super) fn row_content_rect(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x.saturating_add(1),
+        rect.y,
+        rect.width.saturating_sub(2),
+        rect.height,
+    )
+}
+
 pub(super) fn list_scroll_metrics(
     row_heights: &[u16],
     gaps_after: &[u16],
@@ -96,6 +110,13 @@ pub(super) fn render_list_scrollbar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_rows_have_no_blank_padding() {
+        assert_eq!(entry_row_height(0), 1);
+        assert_eq!(entry_row_height(2), 2);
+        assert_eq!(entry_row_height(usize::MAX), u16::MAX);
+    }
 
     #[test]
     fn list_metrics_preserve_variable_rows_and_caller_owned_gap_policy() {

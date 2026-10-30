@@ -4,7 +4,9 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-fn workspace_selection_background(palette: &Palette) -> ratatui::style::Color {
+pub(in crate::client::shell) fn workspace_selection_background(
+    palette: &Palette,
+) -> ratatui::style::Color {
     if palette.selection_bg == ratatui::style::Color::Reset {
         palette.active_row_bg
     } else {
@@ -219,14 +221,15 @@ pub(crate) fn render_sidebar(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    render_workspace_header(
+    put_text(
         buffer,
-        workspace_area,
+        workspace_area.x,
+        workspace_area.y,
+        workspace_area.width,
         " spaces",
-        super::super::global_menu::global_menu_attention(snapshot),
-        config.mouse_capture,
-        palette,
-        hits,
+        Style::default()
+            .fg(palette.overlay0)
+            .add_modifier(Modifier::BOLD),
     );
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
@@ -234,7 +237,9 @@ pub(crate) fn render_sidebar(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
         workspace_area.width,
-        workspace_area.height.saturating_sub(WORKSPACE_HEADER_ROWS),
+        workspace_area
+            .height
+            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
     );
     hits.workspace_body = body;
     let row_heights = entries
@@ -244,15 +249,15 @@ pub(crate) fn render_sidebar(
                 .workspaces
                 .get(entry.index)
                 .map(|workspace| {
-                    workspace_rows(
-                        workspace,
-                        displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
-                        entry.indented,
-                        &config.spaces,
+                    super::scroll::entry_row_height(
+                        workspace_rows(
+                            workspace,
+                            displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
+                            entry.indented,
+                            &config.spaces,
+                        )
+                        .len(),
                     )
-                    .len()
-                    .max(1)
-                    .min(u16::MAX as usize) as u16
                 })
                 .unwrap_or(1)
         })
@@ -306,7 +311,7 @@ pub(crate) fn render_sidebar(
         };
         let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
         let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
-        let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+        let row_height = super::scroll::entry_row_height(rows.len()).min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
             break;
         }
@@ -363,10 +368,10 @@ pub(crate) fn render_sidebar(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
-    if let Some(row) = state
-        .workspace_drop_indicator_row
-        .filter(|row| *row >= workspace_area.y.saturating_add(1) && *row < workspace_area.bottom())
-    {
+    if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
+        *row >= workspace_area.y.saturating_add(1)
+            && *row < workspace_area.bottom().saturating_sub(1)
+    }) {
         put_text(
             buffer,
             body.x,
@@ -376,6 +381,15 @@ pub(crate) fn render_sidebar(
             Style::default().fg(palette.accent),
         );
     }
+
+    render_workspace_footer(
+        buffer,
+        workspace_area,
+        super::super::global_menu::global_menu_attention(snapshot),
+        config.mouse_capture,
+        palette,
+        hits,
+    );
 
     super::render_agent_panel(
         buffer,
@@ -553,33 +567,34 @@ pub(in crate::client::shell) fn workspace_close_is_group(
     has_child
 }
 
-/// Section title on the left, `+ new` and `menu` actions on the right.
-pub(in crate::client::shell) fn render_workspace_header(
+/// Bottom row of the workspace section: `+ new` on the left, `menu` on the right.
+pub(in crate::client::shell) fn render_workspace_footer(
     buffer: &mut Buffer,
     workspace_area: Rect,
-    title: &str,
     menu_attention: bool,
     mouse_capture: bool,
     palette: &Palette,
     hits: &mut ShellHitMap,
 ) {
-    if workspace_area.height == 0 {
+    if workspace_area.height == 0 || !mouse_capture {
         return;
     }
-    let y = workspace_area.y;
+    let y = workspace_area.bottom().saturating_sub(1);
+    let new = " + new";
+    hits.new_workspace = Rect::new(
+        workspace_area.x,
+        y,
+        super::render::display_width(new).min(workspace_area.width),
+        1,
+    );
     put_text(
         buffer,
         workspace_area.x,
         y,
         workspace_area.width,
-        title,
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
+        new,
+        Style::default().fg(palette.overlay0),
     );
-    if !mouse_capture {
-        return;
-    }
     let menu = if menu_attention { "● menu" } else { "menu" };
     // The click target extends two cells left of the label.
     let menu_width = (super::render::display_width(menu) + 2).min(workspace_area.width);
@@ -608,23 +623,6 @@ pub(in crate::client::shell) fn render_workspace_header(
                 .add_modifier(Modifier::BOLD),
         );
     }
-    let new = "+ new";
-    let new_width = super::render::display_width(new);
-    let new_x = hits.global_launcher.x.saturating_sub(new_width);
-    let title_end = workspace_area.x + super::render::display_width(title);
-    if new_x <= title_end {
-        hits.new_workspace = Rect::default();
-        return;
-    }
-    hits.new_workspace = Rect::new(new_x, y, new_width, 1);
-    put_text(
-        buffer,
-        new_x,
-        y,
-        new_width,
-        new,
-        Style::default().fg(palette.overlay0),
-    );
 }
 
 /// Rows without an agent leave the icon slot blank instead of drawing `·`.
@@ -650,6 +648,7 @@ pub(in crate::client::shell) fn render_parent_group_toggle(
 ) -> Option<(Rect, String)> {
     let key = parent_group_key(snapshot, workspace_index)?;
     // The toggle takes the status icon's slot and carries its color.
+    let workspace_rect = super::scroll::row_content_rect(workspace_rect);
     let toggle = Rect::new(workspace_rect.x.saturating_add(1), workspace_rect.y, 1, 1);
     let color = if status == crate::api::schema::AgentStatus::Unknown {
         palette.overlay0
@@ -743,19 +742,20 @@ pub(in crate::client::shell) fn render_workspace_rows(
     dragged: bool,
     palette: &Palette,
 ) {
+    let content = super::scroll::row_content_rect(area);
     for (row_index, row) in rows.iter().enumerate() {
-        let y = area.y + row_index as u16;
-        if y >= area.bottom() {
+        let y = content.y + row_index as u16;
+        if y >= content.bottom() {
             break;
         }
-        let mut x = area.x;
+        let mut x = content.x;
         if entry.indented {
             let prefix = if row_index == 0 { "   " } else { "     " };
             x = put_segment(
                 buffer,
                 x,
                 y,
-                area.right(),
+                content.right(),
                 prefix,
                 Style::default().fg(palette.overlay0),
             );
@@ -771,7 +771,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
             } else {
                 palette.subtext0
             })
-            .add_modifier(if highlighted {
+            .add_modifier(if highlighted || !entry.indented {
                 Modifier::BOLD
             } else {
                 Modifier::empty()
@@ -792,10 +792,10 @@ pub(in crate::client::shell) fn render_workspace_rows(
             secondary_style,
             Style::default().fg(palette.overlay1),
             palette,
-            area.right().saturating_sub(2).saturating_sub(x) as usize,
+            content.right().saturating_sub(x) as usize,
         );
         Paragraph::new(Line::from(spans)).render(
-            Rect::new(x, y, area.right().saturating_sub(2).saturating_sub(x), 1),
+            Rect::new(x, y, content.right().saturating_sub(x), 1),
             buffer,
         );
     }

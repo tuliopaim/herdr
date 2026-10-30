@@ -149,7 +149,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
     let collapsed = state.compose(106, 20).expect("collapsed worktree group");
     let parent = state.hits.workspaces[0].rect;
     let status_cell = usize::from(parent.y) * usize::from(collapsed.width)
-        + usize::from(parent.x.saturating_add(1));
+        + usize::from(parent.x.saturating_add(2));
     assert_eq!(
         collapsed.cells[status_cell].fg,
         crate::protocol::color_to_u32(state.config.palette.red)
@@ -217,7 +217,7 @@ fn duplicate_repo_parents_remain_visible_and_focusable_when_collapsed() {
             }
             let parent = state.hits.workspaces[0].rect;
             let status_cell =
-                usize::from(parent.y) * usize::from(frame.width) + usize::from(parent.x + 1);
+                usize::from(parent.y) * usize::from(frame.width) + usize::from(parent.x + 2);
             assert_ne!(
                 frame.cells[status_cell].fg,
                 crate::protocol::color_to_u32(state.config.palette.red)
@@ -233,13 +233,13 @@ fn duplicate_repo_parents_remain_visible_and_focusable_when_collapsed() {
             let duplicate = state.hits.workspaces[1].rect;
             state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
-                column: duplicate.x + 2,
+                column: duplicate.x + 4,
                 row: duplicate.y,
                 modifiers: KeyModifiers::empty(),
             })]);
             let click = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
                 kind: MouseEventKind::Up(MouseButton::Left),
-                column: duplicate.x + 2,
+                column: duplicate.x + 4,
                 row: duplicate.y,
                 modifiers: KeyModifiers::empty(),
             })]);
@@ -459,7 +459,7 @@ fn workspace_drag_moves_parent_worktree_as_one_block_and_rejects_child() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());
-    state.compose(106, 24).expect("worktree workspaces");
+    state.compose(106, 32).expect("worktree workspaces");
     assert!(state.hits.workspaces[1].indented);
     let parent = state.hits.workspaces[0].rect;
     let child = state.hits.workspaces[1].rect;
@@ -467,7 +467,7 @@ fn workspace_drag_moves_parent_worktree_as_one_block_and_rejects_child() {
 
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
-        column: parent.x + 2,
+        column: parent.x + 4,
         row: parent.y,
         modifiers: KeyModifiers::empty(),
     })]);
@@ -494,7 +494,7 @@ fn workspace_drag_moves_parent_worktree_as_one_block_and_rejects_child() {
             )
     ));
 
-    state.compose(106, 24).expect("worktree child");
+    state.compose(106, 32).expect("worktree child");
     state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: child.x + 2,
@@ -520,7 +520,7 @@ fn workspace_drag_moves_parent_worktree_as_one_block_and_rejects_child() {
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());
     state
-        .compose(106, 24)
+        .compose(106, 32)
         .expect("repository block with duplicate root");
     let duplicate = state.hits.workspaces[1].rect;
     let other = state.hits.workspaces[3].rect;
@@ -530,19 +530,19 @@ fn workspace_drag_moves_parent_worktree_as_one_block_and_rejects_child() {
     ] {
         state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: source.x + 2,
+            column: source.x + 4,
             row: source.y,
             modifiers: KeyModifiers::empty(),
         })]);
         state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
             kind: MouseEventKind::Drag(MouseButton::Left),
-            column: source.x + 2,
+            column: source.x + 4,
             row: target_row,
             modifiers: KeyModifiers::empty(),
         })]);
         let moved = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
             kind: MouseEventKind::Up(MouseButton::Left),
-            column: source.x + 2,
+            column: source.x + 4,
             row: target_row,
             modifiers: KeyModifiers::empty(),
         })]);
@@ -776,7 +776,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
         .join("\n");
     assert!(text.contains("× needs input"), "frame: {text}");
     assert!(text.contains("pi two"), "frame: {text}");
-    assert!(text.contains("waiting fo"), "frame: {text}");
+    assert!(text.contains("waiting"), "frame: {text}");
     assert_eq!(
         state
             .hits
@@ -787,10 +787,21 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
     );
 
     let first = state.hits.agents[0].0;
+    let focused = state.hits.agents[1].0;
+    assert_eq!(first.height, 2);
+    assert_eq!(focused.y, first.bottom());
+    assert_eq!(focused.height, 2);
+    let buffer = frame.to_ratatui_buffer().expect("agent buffer");
+    for x in focused.x..focused.right() {
+        assert_eq!(
+            buffer[(x, focused.bottom() - 1)].bg,
+            render::sidebar::workspace_active_background(&state.config.palette, false)
+        );
+    }
     let click = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: first.x,
-        row: first.y,
+        row: first.bottom() - 1,
         modifiers: KeyModifiers::empty(),
     })]);
     let [ClientShellAction::Endpoint { request, .. }] = &click.actions[..] else {
@@ -1794,4 +1805,67 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(repaint);
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
+}
+
+#[test]
+fn desktop_worktree_rows_are_compact_and_padded_inside_background() {
+    let mut config = Config::default();
+    config.ui.sidebar.spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+    let mut projected = snapshot();
+    projected.workspaces[0].worktree = Some(ClientShellWorktree {
+        key: "repo".into(),
+        label: "repo".into(),
+        is_linked_worktree: false,
+    });
+    for number in 2..=3 {
+        let mut child = projected.workspaces[0].clone();
+        child.workspace_id = format!("ws_{number}");
+        child.number = number;
+        child.focused = false;
+        child.worktree.as_mut().unwrap().is_linked_worktree = true;
+        projected.workspaces.push(child);
+    }
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let frame = state.compose(106, 24).unwrap();
+    let buffer = frame.to_ratatui_buffer().unwrap();
+    assert_eq!(state.hits.workspaces.len(), 3);
+    for (index, hit) in state.hits.workspaces.iter().enumerate() {
+        assert_eq!(hit.rect.height, 1);
+        assert_eq!(hit.indented, index > 0);
+        if index > 0 {
+            assert_eq!(hit.rect.y, state.hits.workspaces[index - 1].rect.bottom());
+        }
+        assert_eq!(buffer[(hit.rect.x, hit.rect.y)].symbol(), " ");
+        for x in hit.rect.x..hit.rect.right() {
+            if index == 0 {
+                assert_eq!(
+                    buffer[(x, hit.rect.bottom() - 1)].bg,
+                    render::sidebar::workspace_active_background(&state.config.palette, false)
+                );
+            }
+        }
+    }
+    let child = state.hits.workspaces[2].rect;
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind,
+            column: child.x + 6,
+            row: child.bottom() - 1,
+            modifiers: KeyModifiers::empty(),
+        })]);
+        if matches!(kind, MouseEventKind::Up(_)) {
+            assert!(
+                matches!(outcome.actions.as_slice(), [ClientShellAction::Endpoint { request, .. }]
+                if matches!(&request.method, crate::api::schema::Method::WorkspaceFocus(target) if target.workspace_id == "ws_3"))
+            );
+        }
+    }
+    state.sidebar_collapsed = true;
+    state.compose(106, 24).unwrap();
+    assert!(state.hits.workspaces.iter().all(|hit| hit.rect.height == 1));
 }

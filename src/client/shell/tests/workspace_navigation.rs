@@ -155,7 +155,7 @@ fn navigation_highlights_only_the_preview_and_activates_on_enter() {
             if terminal_theme {
                 state.config.palette = Palette::terminal();
             }
-            state.compose(cols, 28).unwrap();
+            state.compose(cols, 40).unwrap();
             enter_navigation(&mut state);
             for (endpoint, collision, steps) in [
                 (&ClientEndpointId::Local, &remote, 1),
@@ -166,7 +166,7 @@ fn navigation_highlights_only_the_preview_and_activates_on_enter() {
                 }
                 assert_selected(&state, endpoint, "ws_2");
                 let buffer = state
-                    .compose(cols, 28)
+                    .compose(cols, 40)
                     .unwrap()
                     .to_ratatui_buffer()
                     .unwrap();

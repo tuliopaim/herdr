@@ -188,7 +188,7 @@ pub(super) fn render_agent_list<T>(
 
     let row_heights = rows
         .iter()
-        .map(|row| row_lines(row).max(1).min(u16::MAX as usize) as u16)
+        .map(|row| super::scroll::entry_row_height(row_lines(row)))
         .collect::<Vec<_>>();
     let gaps = rows
         .iter()
@@ -330,6 +330,8 @@ pub(super) fn render_agent_row(
     } else {
         Style::default()
     };
+    buffer.set_style(rect, row_style);
+    let rect = super::scroll::row_content_rect(rect);
     let name_style = if row.focused {
         Style::default()
             .fg(palette.text)

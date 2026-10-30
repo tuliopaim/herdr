@@ -253,14 +253,15 @@ pub(super) fn render_expanded(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    super::sidebar::render_workspace_header(
+    put_text(
         buffer,
-        workspace_area,
+        workspace_area.x,
+        workspace_area.y,
+        workspace_area.width,
         " machines",
-        active_snapshot.is_some_and(super::global_menu::global_menu_attention),
-        config.mouse_capture,
-        palette,
-        hits,
+        Style::default()
+            .fg(palette.overlay0)
+            .add_modifier(Modifier::BOLD),
     );
 
     let empty_collapsed_groups = HashSet::new();
@@ -295,7 +296,9 @@ pub(super) fn render_expanded(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
         workspace_area.width,
-        workspace_area.height.saturating_sub(WORKSPACE_HEADER_ROWS),
+        workspace_area
+            .height
+            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
     );
     hits.workspace_body = body;
     let row_heights = rows
@@ -311,7 +314,7 @@ pub(super) fn render_expanded(
                     .as_deref()
                     .and_then(|snapshot| {
                         let workspace = snapshot.workspaces.get(entry.index)?;
-                        Some(
+                        Some(super::scroll::entry_row_height(
                             super::sidebar::workspace_rows(
                                 workspace,
                                 super::sidebar::displayed_workspace_status(
@@ -322,10 +325,8 @@ pub(super) fn render_expanded(
                                 entry.indented,
                                 &config.spaces,
                             )
-                            .len()
-                            .max(1)
-                            .min(u16::MAX as usize) as u16,
-                        )
+                            .len(),
+                        ))
                     })
                     .unwrap_or(1)
             }
@@ -451,24 +452,29 @@ pub(super) fn render_expanded(
                     entry.indented,
                     &config.spaces,
                 );
-                let height = (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+                let height = super::scroll::entry_row_height(tokens.len()).min(body.height);
                 if y.saturating_add(height) > body.bottom() {
                     break;
                 }
                 let rect = Rect::new(body.x, y, content_width, height);
-                let nested = Rect::new(
-                    rect.x.saturating_add(2),
-                    rect.y,
-                    rect.width.saturating_sub(2),
-                    rect.height,
-                );
                 let endpoint_active = &endpoint.endpoint_id == state.active_endpoint_id;
                 let selected = state.selected_workspace_id.is_some_and(|target| {
                     target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
                 });
+                if selected || (endpoint_active && workspace.focused) {
+                    let background = if selected {
+                        super::sidebar::workspace_selection_background(palette)
+                    } else {
+                        super::sidebar::workspace_active_background(
+                            palette,
+                            state.selected_workspace_id.is_some(),
+                        )
+                    };
+                    buffer.set_style(rect, Style::default().bg(background));
+                }
                 super::sidebar::render_workspace_rows(
                     buffer,
-                    nested,
+                    rect,
                     status,
                     config.status_indicators,
                     entry,
@@ -489,7 +495,7 @@ pub(super) fn render_expanded(
                 }
                 let group_toggle = super::sidebar::render_parent_group_toggle(
                     buffer,
-                    nested,
+                    rect,
                     snapshot,
                     entry.index,
                     collapsed_groups,
@@ -514,6 +520,15 @@ pub(super) fn render_expanded(
         hits.workspace_scrollbar = track;
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
+
+    super::sidebar::render_workspace_footer(
+        buffer,
+        workspace_area,
+        active_snapshot.is_some_and(super::global_menu::global_menu_attention),
+        config.mouse_capture,
+        palette,
+        hits,
+    );
 
     super::endpoint_agents::render_expanded(
         buffer,

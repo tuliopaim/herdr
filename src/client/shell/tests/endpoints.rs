@@ -975,7 +975,22 @@ fn machine_navigation_does_not_require_a_local_snapshot_or_surface() {
 #[test]
 fn sidebar_renders_local_and_saved_ssh_endpoints_with_status() {
     let (mut state, _) = state_with_remote();
+    state.sidebar_width = 32;
     let frame = state.compose(100, 28).expect("combined endpoint frame");
+    let local_workspace = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.endpoint_id.is_local())
+        .unwrap()
+        .rect;
+    let buffer = frame.to_ratatui_buffer().unwrap();
+    for x in local_workspace.x..local_workspace.right() {
+        assert_eq!(
+            buffer[(x, local_workspace.bottom() - 1)].bg,
+            render::sidebar::workspace_active_background(&state.config.palette, false)
+        );
+    }
     let text = frame
         .cells
         .chunks(frame.width as usize)
@@ -1281,6 +1296,19 @@ fn expanded_machine_sidebar_reveals_newly_focused_workspace() {
 }
 
 #[test]
+fn expanded_machine_sidebar_keeps_actions_directly_above_agents() {
+    let (mut state, _) = state_with_remote();
+    state.set_snapshot(Box::new(snapshot()));
+
+    state.compose(100, 48).expect("combined endpoint frame");
+
+    let footer_y = state.hits.sidebar_section_divider.y - 1;
+    assert_eq!(state.hits.new_workspace.y, footer_y);
+    assert_eq!(state.hits.global_launcher.y, footer_y);
+    assert!(state.hits.workspace_body.bottom() <= footer_y);
+}
+
+#[test]
 fn expanded_machine_sidebar_applies_space_row_gap_within_each_machine() {
     let (mut state, remote_id) = state_with_remote();
     state.config.spaces.row_gap = 1;
@@ -1318,7 +1346,7 @@ fn expanded_machine_sidebar_applies_space_row_gap_within_each_machine() {
     remote.workspaces.push(third);
     state.set_endpoint_snapshot(&remote_id, Box::new(remote));
 
-    state.compose(100, 40).expect("combined endpoint frame");
+    state.compose(100, 48).expect("combined endpoint frame");
     let local_workspaces = state
         .hits
         .workspaces
@@ -1364,7 +1392,7 @@ fn expanded_machine_sidebar_applies_space_row_gap_within_each_machine() {
     );
 
     state.workspace_scroll = usize::MAX;
-    state.compose(100, 18).expect("scrolled endpoint frame");
+    state.compose(100, 24).expect("scrolled endpoint frame");
     let metrics = state
         .hits
         .workspace_scroll_metrics
@@ -1444,6 +1472,7 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
     use crate::config::{AgentSidebarToken, StatusIndicatorStyle};
 
     let mut config = Config::default();
+    config.ui.sidebar_width = 30;
     config.ui.status_indicators = StatusIndicatorStyle::Symbols;
     config.ui.sidebar.agents.rows = vec![vec![
         AgentSidebarToken::StateIcon,
@@ -1458,6 +1487,7 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
 
     let mut local = snapshot();
     local.agents = vec![agent("local agent", AgentStatus::Idle, 1)];
+    local.agents[0].focused = true;
     state.set_snapshot(Box::new(local));
     state.set_pane_surface(surface());
     let mut remote = snapshot();
@@ -1466,6 +1496,21 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
     state.set_endpoint_snapshot(&endpoint_id, Box::new(remote));
 
     let frame = state.compose(100, 28).expect("combined endpoint frame");
+    let focused = state
+        .hits
+        .endpoint_agents
+        .iter()
+        .find(|(_, endpoint, _)| endpoint.is_local())
+        .unwrap()
+        .0;
+    assert_eq!(focused.height, 1);
+    let buffer = frame.to_ratatui_buffer().unwrap();
+    for x in focused.x..focused.right() {
+        assert_eq!(
+            buffer[(x, focused.bottom() - 1)].bg,
+            render::sidebar::workspace_active_background(&state.config.palette, false)
+        );
+    }
     let text = frame
         .cells
         .chunks(frame.width as usize)
@@ -1574,6 +1619,7 @@ fn current_workspace_or_blocked_keeps_foreign_attention_only() {
     use crate::config::AgentSidebarToken;
 
     let mut config = Config::default();
+    config.ui.sidebar_width = 30;
     config.ui.sidebar.agents.rows =
         vec![vec![AgentSidebarToken::Machine, AgentSidebarToken::Agent]];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
@@ -1814,6 +1860,7 @@ fn selected_custom_sort_orders_rendering_and_indexed_navigation() {
     }];
     state.set_test_endpoint_agent_view(&ClientEndpointId::Local, Some(view));
 
+    state.sidebar_width = 32;
     let frame = state.compose(100, 28).expect("custom sorted frame");
     let text = frame
         .cells
@@ -2127,7 +2174,7 @@ fn machine_arrow_toggles_inactive_machine_without_switching() {
             state.sidebar_collapsed = sidebar_collapsed;
 
             for collapsed in [true, false] {
-                let frame = state.compose(100, 28).expect("three machine frame");
+                let frame = state.compose(100, 36).expect("three machine frame");
                 let machine = state
                     .hits
                     .machines
@@ -2169,7 +2216,7 @@ fn machine_arrow_toggles_inactive_machine_without_switching() {
                 assert!(!state.collapsed_endpoints.contains(&other_id));
                 assert!(state.endpoint_error.is_none());
 
-                state.compose(100, 28).expect("toggled machine frame");
+                state.compose(100, 36).expect("toggled machine frame");
                 assert_eq!(
                     state
                         .hits
@@ -2382,6 +2429,7 @@ fn disconnected_active_endpoint_freezes_surface_and_marks_cached_ui_stale() {
     use crate::config::{AgentSidebarToken, StatusIndicatorStyle};
 
     let (mut state, endpoint_id) = state_with_remote();
+    state.sidebar_width = 30;
     state.config.status_indicators = StatusIndicatorStyle::Symbols;
     state.config.agents.rows = vec![vec![
         AgentSidebarToken::StateIcon,
